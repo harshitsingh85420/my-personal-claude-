@@ -332,9 +332,9 @@
         .attachment-remove:hover { opacity:1; }
 
         #input-box {
-            display:flex; align-items:center; gap:8px;
+            display:flex; align-items:center; gap:6px;
             background:var(--bg-input); border:1px solid var(--border);
-            border-radius:16px; padding:8px 8px 8px 14px;
+            border-radius:16px; padding:8px 8px 8px 10px;
             transition:border-color 0.2s, box-shadow 0.2s;
         }
         #input-box:focus-within { border-color:var(--border-hover); box-shadow:0 0 0 3px var(--accent-glow); }
@@ -479,9 +479,9 @@
             <div id="attachment-preview"></div>
             <div id="input-box">
                 <button id="websearch-btn" class="icon-btn" title="Toggle web search" onclick="toggleWebSearch()"><span class="ws-dot"></span>Web Search</button>
-                <button id="attach-btn" class="icon-btn" title="Attach a file">📎</button>
                 <input type="file" id="file-input" accept=".txt,.json,.csv,.md,.html,.js,.ts,.py,.css,.jsx,.tsx">
                 <textarea id="user-input" placeholder="Ask me to document anything…" rows="1"></textarea>
+                <button id="attach-btn" class="icon-btn" title="Attach a file">📎</button>
                 <button id="send-btn" class="icon-btn" title="Send" onclick="sendMessage()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                 </button>

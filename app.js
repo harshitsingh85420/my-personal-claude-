@@ -337,10 +337,10 @@ function handleFileSelect(e) {
     const fileSizeKB = (file.size / 1024).toFixed(1);
     console.log('[Attach] Selected:', file.name, file.size, 'bytes', '(' + fileSizeKB + ' KB)');
 
-    // 5 MB hard limit
-    const MAX_SIZE = 5 * 1024 * 1024;
+    // 25 MB hard limit
+    const MAX_SIZE = 25 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-        showAttachError(`File is too large (${fileSizeKB} KB). Maximum is 5 MB.`);
+        showAttachError(`File is too large (${fileSizeKB} KB). Maximum is 25 MB.`);
         fileInput.value = '';
         return;
     }
@@ -350,13 +350,13 @@ function handleFileSelect(e) {
         let content = evt.target.result;
         attachedFileName = file.name;
 
-        // If > 200KB of text, truncate and warn
+        // If > 1MB of text, truncate and warn
         let truncated = false;
-        const SOFT_LIMIT = 200 * 1024; // 200KB of text
+        const SOFT_LIMIT = 1024 * 1024; // 1MB of text
         if (content.length > SOFT_LIMIT) {
             content = content.slice(0, SOFT_LIMIT);
             truncated = true;
-            console.log('[Attach] ⚠️ File truncated to 200KB of text');
+            console.log('[Attach] ⚠️ File truncated to 1MB of text');
         }
 
         attachedFileContent = content;
@@ -366,7 +366,7 @@ function handleFileSelect(e) {
 
         if (attachPreview) {
             const truncNote = truncated
-                ? `<span style="color:#fbbf24;margin-left:4px;">⚠ Truncated to first 200KB</span>`
+                ? `<span style="color:#fbbf24;margin-left:4px;">⚠ Truncated to first 1MB</span>`
                 : '';
             attachPreview.style.cssText = 'display: flex !important;';
             attachPreview.innerHTML = `

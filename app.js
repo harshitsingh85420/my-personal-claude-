@@ -334,41 +334,65 @@ function handleFileSelect(e) {
     const file = (e?.target?.files || [])[0];
     if (!file) { console.log('[Attach] No file selected'); return; }
 
-    console.log('[Attach] Selected:', file.name, file.size, 'bytes');
+    const fileSizeKB = (file.size / 1024).toFixed(1);
+    console.log('[Attach] Selected:', file.name, file.size, 'bytes', '(' + fileSizeKB + ' KB)');
 
-    if (file.size > 512 * 1024) {
-        alert('File is too large (max 500 KB). Please choose a smaller file.');
+    // 5 MB hard limit
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+        showAttachError(`File is too large (${fileSizeKB} KB). Maximum is 5 MB.`);
         fileInput.value = '';
         return;
     }
 
     const reader = new FileReader();
     reader.onload = evt => {
-        attachedFileContent = evt.target.result;
-        attachedFileName    = file.name;
-        const kb = (file.size / 1024).toFixed(1);
-        const lines = attachedFileContent.split('\n').length;
+        let content = evt.target.result;
+        attachedFileName = file.name;
 
-        console.log('[Attach] ✅ File read:', file.name, kb + ' KB,', lines, 'lines');
+        // If > 200KB of text, truncate and warn
+        let truncated = false;
+        const SOFT_LIMIT = 200 * 1024; // 200KB of text
+        if (content.length > SOFT_LIMIT) {
+            content = content.slice(0, SOFT_LIMIT);
+            truncated = true;
+            console.log('[Attach] ⚠️ File truncated to 200KB of text');
+        }
+
+        attachedFileContent = content;
+        const lines = content.split('\n').length;
+
+        console.log('[Attach] ✅ File read:', file.name, fileSizeKB + ' KB,', lines, 'lines', truncated ? '(truncated)' : '');
 
         if (attachPreview) {
+            const truncNote = truncated
+                ? `<span style="color:#fbbf24;margin-left:4px;">⚠ Truncated to first 200KB</span>`
+                : '';
             attachPreview.style.cssText = 'display: flex !important;';
             attachPreview.innerHTML = `
                 <span style="font-size:18px;">📄</span>
                 <strong>${escapeHtml(file.name)}</strong>
-                <span class="attachment-size">(${kb} KB · ${lines} lines)</span>
+                <span class="attachment-size">(${fileSizeKB} KB · ${lines} lines)${truncNote}</span>
                 <span class="attachment-remove" onclick="clearAttachment()" title="Remove attachment">✕</span>`;
-        } else {
-            console.error('[Attach] attachPreview element not found!');
         }
     };
 
     reader.onerror = () => {
         console.error('[Attach] FileReader error');
-        alert('Error reading file.');
+        showAttachError('Could not read this file. Try a different one.');
     };
 
     reader.readAsText(file);
+}
+
+function showAttachError(msg) {
+    if (attachPreview) {
+        attachPreview.style.cssText = 'display: flex !important; background: rgba(248,113,113,0.12); border-color: rgba(248,113,113,0.35); color: #f87171;';
+        attachPreview.innerHTML = `
+            <span style="font-size:18px;">⚠️</span>
+            <strong>${msg}</strong>
+            <span class="attachment-remove" onclick="clearAttachment()" title="Dismiss" style="color:#f87171;">✕</span>`;
+    }
 }
 
 if (fileInput) {

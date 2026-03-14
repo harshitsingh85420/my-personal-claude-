@@ -337,42 +337,20 @@ function handleFileSelect(e) {
     const fileSizeKB = (file.size / 1024).toFixed(1);
     console.log('[Attach] Selected:', file.name, file.size, 'bytes', '(' + fileSizeKB + ' KB)');
 
-    // 25 MB hard limit
-    const MAX_SIZE = 25 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-        showAttachError(`File is too large (${fileSizeKB} KB). Maximum is 25 MB.`);
-        fileInput.value = '';
-        return;
-    }
-
     const reader = new FileReader();
     reader.onload = evt => {
-        let content = evt.target.result;
+        attachedFileContent = evt.target.result;
         attachedFileName = file.name;
+        const lines = attachedFileContent.split('\n').length;
 
-        // If > 1MB of text, truncate and warn
-        let truncated = false;
-        const SOFT_LIMIT = 1024 * 1024; // 1MB of text
-        if (content.length > SOFT_LIMIT) {
-            content = content.slice(0, SOFT_LIMIT);
-            truncated = true;
-            console.log('[Attach] ⚠️ File truncated to 1MB of text');
-        }
-
-        attachedFileContent = content;
-        const lines = content.split('\n').length;
-
-        console.log('[Attach] ✅ File read:', file.name, fileSizeKB + ' KB,', lines, 'lines', truncated ? '(truncated)' : '');
+        console.log('[Attach] ✅ File read:', file.name, fileSizeKB + ' KB,', lines, 'lines');
 
         if (attachPreview) {
-            const truncNote = truncated
-                ? `<span style="color:#fbbf24;margin-left:4px;">⚠ Truncated to first 1MB</span>`
-                : '';
             attachPreview.style.cssText = 'display: flex !important;';
             attachPreview.innerHTML = `
                 <span style="font-size:18px;">📄</span>
                 <strong>${escapeHtml(file.name)}</strong>
-                <span class="attachment-size">(${fileSizeKB} KB · ${lines} lines)${truncNote}</span>
+                <span class="attachment-size">(${fileSizeKB} KB · ${lines} lines)</span>
                 <span class="attachment-remove" onclick="clearAttachment()" title="Remove attachment">✕</span>`;
         }
     };

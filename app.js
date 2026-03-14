@@ -310,31 +310,74 @@ function toggleWebSearch() {
 function clearAttachment() {
     attachedFileContent = null;
     attachedFileName    = null;
-    attachPreview.style.display = 'none';
-    attachPreview.innerHTML = '';
-    fileInput.value = '';
+    if (attachPreview) {
+        attachPreview.style.display = 'none';
+        attachPreview.innerHTML = '';
+    }
+    if (fileInput) fileInput.value = '';
+    console.log('[Attach] Cleared');
 }
 
-attachBtn.addEventListener('click', () => fileInput.click());
+// Open file picker when 📎 is clicked
+if (attachBtn && fileInput) {
+    attachBtn.addEventListener('click', () => {
+        console.log('[Attach] 📎 clicked, opening file picker');
+        fileInput.click();
+    });
+} else {
+    console.error('[Attach] MISSING: attachBtn or fileInput not found in DOM!');
+}
 
-fileInput.addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 512 * 1024) { alert('File too large (max 500 KB).'); fileInput.value = ''; return; }
+// Handle file selection
+function handleFileSelect(e) {
+    console.log('[Attach] File input changed', e?.target?.files);
+    const file = (e?.target?.files || [])[0];
+    if (!file) { console.log('[Attach] No file selected'); return; }
+
+    console.log('[Attach] Selected:', file.name, file.size, 'bytes');
+
+    if (file.size > 512 * 1024) {
+        alert('File is too large (max 500 KB). Please choose a smaller file.');
+        fileInput.value = '';
+        return;
+    }
+
     const reader = new FileReader();
     reader.onload = evt => {
         attachedFileContent = evt.target.result;
         attachedFileName    = file.name;
         const kb = (file.size / 1024).toFixed(1);
-        attachPreview.style.display = 'flex';
-        attachPreview.innerHTML = `
-            📄 <strong>${escapeHtml(file.name)}</strong>
-            <span class="attachment-size">(${kb} KB · ${attachedFileContent.split('\n').length} lines)</span>
-            <span class="attachment-remove" onclick="clearAttachment()" title="Remove attachment">✕</span>`;
+        const lines = attachedFileContent.split('\n').length;
+
+        console.log('[Attach] ✅ File read:', file.name, kb + ' KB,', lines, 'lines');
+
+        if (attachPreview) {
+            attachPreview.style.cssText = 'display: flex !important;';
+            attachPreview.innerHTML = `
+                <span style="font-size:18px;">📄</span>
+                <strong>${escapeHtml(file.name)}</strong>
+                <span class="attachment-size">(${kb} KB · ${lines} lines)</span>
+                <span class="attachment-remove" onclick="clearAttachment()" title="Remove attachment">✕</span>`;
+        } else {
+            console.error('[Attach] attachPreview element not found!');
+        }
     };
-    reader.onerror = () => alert('Error reading file.');
+
+    reader.onerror = () => {
+        console.error('[Attach] FileReader error');
+        alert('Error reading file.');
+    };
+
     reader.readAsText(file);
-});
+}
+
+if (fileInput) {
+    fileInput.addEventListener('change', handleFileSelect);
+}
+
+// Also expose globally for inline onchange fallback
+window.handleFileSelect = handleFileSelect;
+window.clearAttachment  = clearAttachment;
 
 // ── Textarea auto-resize ──────────────────────────────────────────
 function autoResize() {

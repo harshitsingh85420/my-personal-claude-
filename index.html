@@ -479,7 +479,7 @@
             <div id="attachment-preview"></div>
             <div id="input-box">
                 <button id="websearch-btn" class="icon-btn" title="Toggle web search" onclick="toggleWebSearch()"><span class="ws-dot"></span>Web Search</button>
-                <input type="file" id="file-input" accept=".txt,.json,.csv,.md,.html,.js,.ts,.py,.css,.jsx,.tsx">
+                <input type="file" id="file-input" accept=".txt,.json,.csv,.md,.html,.js,.ts,.py,.css,.jsx,.tsx" onchange="if(window.handleFileSelect)window.handleFileSelect(event)">
                 <textarea id="user-input" placeholder="Ask me to document anything…" rows="1"></textarea>
                 <button id="attach-btn" class="icon-btn" title="Attach a file">📎</button>
                 <button id="send-btn" class="icon-btn" title="Send" onclick="sendMessage()">
@@ -491,6 +491,6 @@
 </div>
 
 <script src="https://js.puter.com/v2/"></script>
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

@@ -325,8 +325,12 @@ fileInput.addEventListener('change', e => {
     reader.onload = evt => {
         attachedFileContent = evt.target.result;
         attachedFileName    = file.name;
+        const kb = (file.size / 1024).toFixed(1);
         attachPreview.style.display = 'flex';
-        attachPreview.innerHTML = `📄 <strong>${escapeHtml(file.name)}</strong><span class="attachment-remove" onclick="clearAttachment()" title="Remove">✕</span>`;
+        attachPreview.innerHTML = `
+            📄 <strong>${escapeHtml(file.name)}</strong>
+            <span class="attachment-size">(${kb} KB · ${attachedFileContent.split('\n').length} lines)</span>
+            <span class="attachment-remove" onclick="clearAttachment()" title="Remove attachment">✕</span>`;
     };
     reader.onerror = () => alert('Error reading file.');
     reader.readAsText(file);

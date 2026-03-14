@@ -1,14 +1,17 @@
 // ══════════════════════════════════════════════════════════════════
-//  Opus 4.6 Documentation Assistant — app.js
+//  Opus 4.6 Documentation Assistant — Multi-chat app.js
 // ══════════════════════════════════════════════════════════════════
 
-// ── marked.js + highlight.js setup ───────────────────────────────
+// ── marked.js + highlight.js ──────────────────────────────────────
 marked.setOptions({ breaks: true, gfm: true });
 
 const renderer = new marked.Renderer();
-renderer.code = (code, lang) => {
+renderer.code = function(token) {
+    // marked v5+ passes a token object; older versions pass (code, lang) separately
+    const rawCode = (typeof token === 'object' && token !== null) ? (token.text || token.raw || '') : String(token);
+    const lang     = (typeof token === 'object' && token !== null) ? (token.lang || '') : (arguments[1] || '');
     const language = (lang && hljs.getLanguage(lang)) ? lang : 'plaintext';
-    const highlighted = hljs.highlight(String(code), { language }).value;
+    const highlighted = hljs.highlight(rawCode, { language }).value;
     const label = language === 'plaintext' ? 'code' : language;
     return `<pre>
       <div class="code-header">
@@ -29,6 +32,12 @@ function copyCode(btn) {
     });
 }
 
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // ── DOM refs ──────────────────────────────────────────────────────
 const messagesEl    = document.getElementById('messages');
 const typingRow     = document.getElementById('typing-row');
@@ -39,14 +48,20 @@ const fileInput     = document.getElementById('file-input');
 const attachPreview = document.getElementById('attachment-preview');
 const emptyState    = document.getElementById('empty-state');
 const webSearchBtn  = document.getElementById('websearch-btn');
+const chatListEl    = document.getElementById('chat-list');
+const topbarTitle   = document.getElementById('topbar-title');
 
-// ── State ─────────────────────────────────────────────────────────
+// ── App State ─────────────────────────────────────────────────────
 let attachedFileContent = null;
 let attachedFileName    = null;
 let isSending           = false;
-let webSearchEnabled    = false;   // ← controlled by the toggle button
+let webSearchEnabled    = false;
 
-// ── System prompts ────────────────────────────────────────────────
+// Multi-chat state
+let activeChatId = null;   // UUID of the currently open chat
+let chatIndex    = [];     // [{ id, title, createdAt }] — ordered list
+
+// ── Prompts ───────────────────────────────────────────────────────
 const BASE_SYSTEM = `You are Claude Opus 4.6 configured as an autonomous documentation specialist.
 Your goal is to provide deep, accurate, and up-to-date documentation on technical subjects, frameworks, and tools.
 
@@ -61,64 +76,148 @@ const SEARCH_ADDON = `
 ## WEB SEARCH CAPABILITY (ACTIVE)
 You have live web search available for this request. When you need current information, output EXACTLY:
 SEARCH_QUERY: <your search query>
+Then STOP. The system will run the search and feed results back so you can continue.`;
 
-Then STOP. The system will run the search and feed results back so you can continue with accurate, up-to-date documentation.`;
-
-// Returns the system prompt based on current web-search state
 function getSystemPrompt() {
     return webSearchEnabled ? BASE_SYSTEM + SEARCH_ADDON : BASE_SYSTEM;
 }
 
-let messages = [{ role: 'system', content: getSystemPrompt() }];
+// ── Storage helpers ───────────────────────────────────────────────
+const CHAT_INDEX_KEY = 'chatIndex_v1';
 
-// ── Web Search Toggle ─────────────────────────────────────────────
-function toggleWebSearch() {
-    webSearchEnabled = !webSearchEnabled;
-    webSearchBtn.classList.toggle('active', webSearchEnabled);
-    // Update the system message so the AI knows its current capability
-    if (messages[0]?.role === 'system') {
-        messages[0].content = getSystemPrompt();
-    }
-    // Visual placeholder update
-    userInput.placeholder = webSearchEnabled
-        ? 'Ask me to document anything… (web search ON 🌐)'
-        : 'Ask me to document anything…';
+function saveChatIndex() {
+    localStorage.setItem(CHAT_INDEX_KEY, JSON.stringify(chatIndex));
 }
 
-// ── Persistence (localStorage) ────────────────────────────────────
-function loadMessages() {
+function loadChatIndex() {
     try {
-        const saved = localStorage.getItem('chat_history');
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            messages = (parsed[0]?.role === 'system')
-                ? parsed
-                : [{ role: 'system', content: getSystemPrompt() }, ...parsed];
-            // Always refresh system prompt to current state
-            messages[0].content = getSystemPrompt();
+        const raw = localStorage.getItem(CHAT_INDEX_KEY);
+        if (raw) chatIndex = JSON.parse(raw);
+    } catch { chatIndex = []; }
+}
+
+function chatKey(id) { return `chat_${id}`; }
+
+function loadChatMessages(id) {
+    try {
+        const raw = localStorage.getItem(chatKey(id));
+        return raw ? JSON.parse(raw) : [{ role:'system', content: getSystemPrompt() }];
+    } catch { return [{ role:'system', content: getSystemPrompt() }]; }
+}
+
+function saveChatMessages(id, msgs) {
+    try { localStorage.setItem(chatKey(id), JSON.stringify(msgs)); } catch {}
+}
+
+function deleteChatData(id) {
+    localStorage.removeItem(chatKey(id));
+}
+
+function uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
+
+// ── Chat Index UI ─────────────────────────────────────────────────
+function renderChatList() {
+    chatListEl.innerHTML = '';
+
+    if (chatIndex.length === 0) {
+        chatListEl.innerHTML = '<div style="padding:10px 12px;font-size:0.75rem;color:var(--text-muted);font-style:italic;">No conversations yet</div>';
+        return;
+    }
+
+    // Newest first
+    [...chatIndex].reverse().forEach(chat => {
+        const item = document.createElement('div');
+        item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '');
+        item.dataset.id = chat.id;
+        item.innerHTML = `
+            <span class="chat-icon">💬</span>
+            <span class="chat-title">${escapeHtml(chat.title)}</span>
+            <button class="chat-delete" title="Delete" onclick="event.stopPropagation(); deleteChat('${chat.id}')">✕</button>`;
+        item.addEventListener('click', () => switchChat(chat.id));
+        chatListEl.appendChild(item);
+    });
+}
+
+// ── Create a new chat ─────────────────────────────────────────────
+function createNewChat() {
+    const id = uuid();
+    const entry = { id, title: 'New Conversation', createdAt: Date.now() };
+    chatIndex.push(entry);
+    saveChatIndex();
+
+    // Initialize with system message
+    saveChatMessages(id, [{ role:'system', content: getSystemPrompt() }]);
+
+    switchChat(id);
+}
+
+// ── Switch to a chat ──────────────────────────────────────────────
+function switchChat(id) {
+    if (isSending) return; // Don't switch while generating
+
+    activeChatId = id;
+
+    // Update sidebar
+    chatListEl.querySelectorAll('.chat-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.id === id);
+    });
+
+    // Update topbar title
+    const entry = chatIndex.find(c => c.id === id);
+    topbarTitle.textContent = entry ? entry.title : 'Conversation';
+
+    // Update system prompt in case web-search toggled
+    const msgs = loadChatMessages(id);
+    if (msgs[0]?.role === 'system') msgs[0].content = getSystemPrompt();
+
+    renderMessages(msgs);
+}
+
+// ── Delete a chat ─────────────────────────────────────────────────
+function deleteChat(id) {
+    chatIndex = chatIndex.filter(c => c.id !== id);
+    deleteChatData(id);
+    saveChatIndex();
+
+    if (activeChatId === id) {
+        // Switch to the most recent remaining chat, or create new
+        if (chatIndex.length > 0) {
+            switchChat(chatIndex[chatIndex.length - 1].id);
+        } else {
+            activeChatId = null;
+            topbarTitle.textContent = 'New Conversation';
+            renderMessages([]);
         }
-    } catch (e) { /* ignore corrupt storage */ }
-    renderAll();
+    }
+
+    renderChatList();
 }
 
-function saveMessages() {
-    try { localStorage.setItem('chat_history', JSON.stringify(messages)); }
-    catch (e) { /* storage full – silently ignore */ }
+// ── Auto-title chat from first user message ───────────────────────
+function autoTitle(text) {
+    const clean = text.replace(/\[Attached.*?\]/g, '').trim();
+    return clean.length > 45 ? clean.slice(0, 45) + '…' : clean || 'New Conversation';
 }
 
-// ── Render helpers ────────────────────────────────────────────────
-function renderAll() {
-    const visible = messages.filter(m => m.role !== 'system');
-    // Remove old chat rows (not the empty-state or typing-row)
+// ── Render messages into the chat pane ───────────────────────────
+function renderMessages(msgs) {
+    // Remove existing rows
     messagesEl.querySelectorAll('.msg-row').forEach(el => el.remove());
+
+    const visible = (msgs || []).filter(m => m.role !== 'system');
+
     if (visible.length === 0) {
         emptyState.style.display = 'flex';
     } else {
         emptyState.style.display = 'none';
-        visible.forEach(msg => {
-            messagesEl.appendChild(buildRow(msg));
-        });
+        visible.forEach(msg => messagesEl.appendChild(buildRow(msg)));
     }
+
     scrollBottom();
 }
 
@@ -134,7 +233,6 @@ function buildRow(msg) {
     bubble.className = `bubble ${msg.role === 'user' ? 'user' : 'assistant'}`;
 
     if (msg.role === 'user') {
-        // Escape HTML in user messages then break newlines
         bubble.textContent = msg.content;
     } else {
         bubble.innerHTML = marked.parse(msg.content || '&nbsp;');
@@ -148,23 +246,18 @@ function buildRow(msg) {
 function appendRow(msg) {
     emptyState.style.display = 'none';
     const row = buildRow(msg);
-    // Insert before the typingRow which is OUTSIDE messagesEl
     messagesEl.appendChild(row);
     scrollBottom();
     return row;
 }
 
-/** Live-update the last .bubble.assistant with streaming text */
-function streamIntoLastBubble(text) {
+function updateLastAssistantBubble(text) {
     const all = messagesEl.querySelectorAll('.bubble.assistant');
     const last = all[all.length - 1];
     if (last) { last.innerHTML = marked.parse(text || '&nbsp;'); scrollBottom(); }
 }
 
-function scrollBottom() {
-    messagesEl.scrollBottom = 0; // reset cache
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-}
+function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
 // ── Typing indicator ──────────────────────────────────────────────
 function setTyping(show) {
@@ -173,17 +266,13 @@ function setTyping(show) {
     if (show) scrollBottom();
 }
 
-// ── Search status bubble ──────────────────────────────────────────
+// ── Search status ─────────────────────────────────────────────────
 let searchStatusEl = null;
 
 function showSearchStatus(query) {
     searchStatusEl = document.createElement('div');
     searchStatusEl.className = 'msg-row';
-    searchStatusEl.innerHTML = `
-        <div class="bubble search-status">
-            <div class="search-spinner"></div>
-            🔍 Searching the web for: <strong>${escapeHtml(query)}</strong>
-        </div>`;
+    searchStatusEl.innerHTML = `<div class="bubble search-status"><div class="search-spinner"></div>🔍 Searching: <strong>${escapeHtml(query)}</strong></div>`;
     messagesEl.appendChild(searchStatusEl);
     scrollBottom();
 }
@@ -192,15 +281,29 @@ function hideSearchStatus() {
     if (searchStatusEl) { searchStatusEl.remove(); searchStatusEl = null; }
 }
 
-function escapeHtml(str) {
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Chip suggestions ──────────────────────────────────────────────
+// ── Chips ─────────────────────────────────────────────────────────
 function fillChip(el) {
     userInput.value = el.textContent.replace(/^📋\s*/, '');
     userInput.focus();
     autoResize();
+}
+
+// ── Web Search Toggle ─────────────────────────────────────────────
+function toggleWebSearch() {
+    webSearchEnabled = !webSearchEnabled;
+    webSearchBtn.classList.toggle('active', webSearchEnabled);
+    userInput.placeholder = webSearchEnabled
+        ? 'Ask me anything… (Web Search ON 🌐)'
+        : 'Ask me to document anything…';
+
+    // Update system msg in current chat
+    if (activeChatId) {
+        const msgs = loadChatMessages(activeChatId);
+        if (msgs[0]?.role === 'system') {
+            msgs[0].content = getSystemPrompt();
+            saveChatMessages(activeChatId, msgs);
+        }
+    }
 }
 
 // ── Attachment ────────────────────────────────────────────────────
@@ -217,19 +320,13 @@ attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
-    // Guard: don't allow files > 500 KB (rough token limit)
-    if (file.size > 512 * 1024) {
-        alert('File is too large (max 500 KB). Please paste the text instead.');
-        fileInput.value = '';
-        return;
-    }
+    if (file.size > 512 * 1024) { alert('File too large (max 500 KB).'); fileInput.value = ''; return; }
     const reader = new FileReader();
     reader.onload = evt => {
         attachedFileContent = evt.target.result;
         attachedFileName    = file.name;
         attachPreview.style.display = 'flex';
-        attachPreview.innerHTML = `📄 <strong>${escapeHtml(file.name)}</strong>
-            <span class="attachment-remove" onclick="clearAttachment()" title="Remove">✕</span>`;
+        attachPreview.innerHTML = `📄 <strong>${escapeHtml(file.name)}</strong><span class="attachment-remove" onclick="clearAttachment()" title="Remove">✕</span>`;
     };
     reader.onerror = () => alert('Error reading file.');
     reader.readAsText(file);
@@ -238,33 +335,52 @@ fileInput.addEventListener('change', e => {
 // ── Textarea auto-resize ──────────────────────────────────────────
 function autoResize() {
     userInput.style.height = 'auto';
-    userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+    userInput.style.height = Math.min(userInput.scrollHeight, 130) + 'px';
 }
 userInput.addEventListener('input', autoResize);
+userInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
 
-// ── Send (supports recursive search-resume) ───────────────────────
+// ── Send message ──────────────────────────────────────────────────
 async function sendMessage(isSearchResume = false) {
-    // Guard: don't stack sends unless resuming after search
     if (isSending && !isSearchResume) return;
 
-    const inputText = userInput.value.trim();
+    // Ensure there's an active chat — auto-create if none
+    if (!activeChatId) createNewChat();
 
-    // Nothing to send (and not resuming from search)
+    const inputText = userInput.value.trim();
     if (!isSearchResume && !inputText && !attachedFileContent) return;
 
-    // ── Build user message ────────────────────────────────────────
+    // Load current chat messages
+    const msgs = loadChatMessages(activeChatId);
+
+    // ── Build user message ──
     if (!isSearchResume) {
         let userContent = inputText;
 
         if (attachedFileContent) {
             userContent += (userContent ? '\n\n' : '') +
-                `**Attached file: ${attachedFileName}**\n\`\`\`\n${attachedFileContent}\n\`\`\``;
+                `**Attached: ${attachedFileName}**\n\`\`\`\n${attachedFileContent}\n\`\`\``;
             clearAttachment();
         }
 
-        messages.push({ role: 'user', content: userContent });
-        saveMessages();
-        appendRow({ role: 'user', content: userContent });
+        msgs.push({ role: 'user', content: userContent });
+
+        // Auto-title chat from first real user message
+        const userMsgs = msgs.filter(m => m.role === 'user');
+        if (userMsgs.length === 1) {
+            const entry = chatIndex.find(c => c.id === activeChatId);
+            if (entry) {
+                entry.title = autoTitle(userContent);
+                saveChatIndex();
+                topbarTitle.textContent = entry.title;
+                renderChatList();
+            }
+        }
+
+        saveChatMessages(activeChatId, msgs);
+        appendRow({ role:'user', content: userContent });
         userInput.value = '';
         autoResize();
     }
@@ -272,16 +388,13 @@ async function sendMessage(isSearchResume = false) {
     isSending = true;
     setTyping(true);
 
-    // Push a placeholder assistant message (will be updated via streaming)
+    // Streaming placeholder
     const placeholder = { role: 'assistant', content: '' };
-    messages.push(placeholder);
+    msgs.push(placeholder);
     appendRow({ role: 'assistant', content: '' });
 
     try {
-        // Build API payload: send all messages except the empty placeholder
-        const apiMessages = messages
-            .slice(0, messages.length - 1)
-            .map(m => ({ role: m.role, content: m.content }));
+        const apiMessages = msgs.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
 
         const response = await puter.ai.chat(apiMessages, {
             model: 'claude-opus-4-6',
@@ -289,49 +402,45 @@ async function sendMessage(isSearchResume = false) {
         });
 
         let fullText = '';
-        setTyping(false); // dots go away once tokens arrive
+        setTyping(false);
 
         for await (const part of response) {
             if (part?.text) {
                 fullText += part.text;
                 placeholder.content = fullText;
-                streamIntoLastBubble(fullText);
+                updateLastAssistantBubble(fullText);
             }
         }
 
         placeholder.content = fullText;
-        saveMessages();
+        saveChatMessages(activeChatId, msgs);
 
-        // ── Web search protocol ───────────────────────────────────
-        // Only attempt search if web search is enabled AND AI requested it
+        // ── Search protocol ──
         if (webSearchEnabled) {
             const match = fullText.match(/SEARCH_QUERY:\s*(.+)/i);
             if (match) {
                 const query = match[1].trim();
                 showSearchStatus(query);
-
-                const searchResults = await performSearch(query);
+                const results = await performSearch(query);
                 hideSearchStatus();
 
-                // Feed results back as a user message so Claude can continue
-                messages.push({
+                msgs.push({
                     role: 'user',
-                    content: `[WEB SEARCH RESULTS for "${query}"]:\n${searchResults}\n\nNow continue writing the documentation using these results.`
+                    content: `[WEB SEARCH RESULTS for "${query}"]:\n${results}\n\nNow continue writing the documentation using these results.`
                 });
-                saveMessages();
+                saveChatMessages(activeChatId, msgs);
 
-                // Reset so the recursive call can proceed
                 isSending = false;
-                await sendMessage(true);   // resume
+                await sendMessage(true);
                 return;
             }
         }
 
     } catch (err) {
-        console.error('[Opus 4.6] Error:', err);
-        placeholder.content = `⚠️ **Error:** ${err.message || 'Failed to get a response. Please try again.'}`;
-        streamIntoLastBubble(placeholder.content);
-        saveMessages();
+        console.error(err);
+        placeholder.content = `⚠️ **Error:** ${err.message || 'Failed to get a response.'}`;
+        updateLastAssistantBubble(placeholder.content);
+        saveChatMessages(activeChatId, msgs);
     } finally {
         isSending = false;
         setTyping(false);
@@ -354,11 +463,18 @@ async function performSearch(query) {
     }
 }
 
-// ── Event listeners ───────────────────────────────────────────────
-sendBtn.addEventListener('click', () => sendMessage());
-userInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-});
+// ── Boot ──────────────────────────────────────────────────────────
+function init() {
+    loadChatIndex();
+    renderChatList();
 
-// ── Init ──────────────────────────────────────────────────────────
-loadMessages();
+    if (chatIndex.length > 0) {
+        // Open most recent chat
+        switchChat(chatIndex[chatIndex.length - 1].id);
+    } else {
+        // First launch — create a starter chat
+        createNewChat();
+    }
+}
+
+init();
